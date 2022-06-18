@@ -15,16 +15,16 @@ standard_cluster_parition_max_limit = 2048
 dedicated_cluster_parition_max_limit_per_cku = 4500
 dedicated_cluster_parition_max_limit = 100000
 
-warn_basic_cluster_parition_max_limit = (2048*80/100)
-warn_standard_cluster_parition_max_limit = (2048*80/100)
+warn_basic_cluster_parition_max_limit = int(2048*80/100)
+warn_standard_cluster_parition_max_limit = int(2048*80/100)
 
 
 ## Function to send API Call on organization level
-def orgAPICall(org_api_key):
+def orgAPICall(org_api_key, env_id):
     try:
         conn = http.client.HTTPSConnection("api.confluent.cloud")
         headers = { "Authorization": "Basic {}".format(org_api_key) }
-        conn.request("GET", "/cmk/v2/clusters?environment=env-dmgw7", headers=headers)  #?environment=default
+        conn.request("GET", "/cmk/v2/clusters?environment={}".format(env_id), headers=headers)
 
         res = conn.getresponse()
         data = res.read()
@@ -41,7 +41,7 @@ def clusterAPICall(kafka_endpoint, cluster_api_key, cluster_id):
     try:
         conn = http.client.HTTPSConnection("{}".format(kafka_endpoint))
         headers = { "Authorization": "Basic {}".format(cluster_api_key) }
-        conn.request("GET", "/kafka/v3/clusters/{}/topics".format(cluster_id), headers=headers)  #?environment=default
+        conn.request("GET", "/kafka/v3/clusters/{}/topics".format(cluster_id), headers=headers)
 
         res = conn.getresponse()
         data = res.read()
@@ -53,11 +53,8 @@ def clusterAPICall(kafka_endpoint, cluster_api_key, cluster_id):
         print(e)
  
 
-# with open("cluster_details.json", "w") as f:
-#     f.write(json.dumps(json_data))
-
-def createClusterObject(org_api_key):
-    requestData = orgAPICall(org_api_key)
+def createClusterObject(org_api_key, env_id):
+    requestData = orgAPICall(org_api_key, env_id)
     clusterDetails = requestData['data']
 
     clusterObject = dict()
@@ -68,12 +65,11 @@ def createClusterObject(org_api_key):
         value['cluster_id'] = cluster['id']
         value['cluster_type'] = cluster['spec']['config']['kind']
         value['cluster_environment_id'] = cluster['spec']['environment']['id']
-        
+
         kafka_bootstrap_endpoint = cluster['spec']['http_endpoint']
         kafka_endpoint = kafka_bootstrap_endpoint.split(':')[1].replace("//", '')
         value['kafka_endpoint'] = kafka_endpoint
 
-        
         if "cku" not in cluster['status']:
             value['cluster_cku'] = 1
         else:
@@ -81,7 +77,6 @@ def createClusterObject(org_api_key):
 
         clusterObject[cluster['spec']['display_name']] = value
 
-    # print(clusterObject)
     return clusterObject
 
 
@@ -99,7 +94,8 @@ def calcaulateTotalParitions(kafka_endpoint, cluster_api_key, cluster_id):
 
 def evaluateClusterObject(org_api_key, confData):
     try:
-        clusterObject = createClusterObject(org_api_key)
+        env_id = confData['env_id']
+        clusterObject = createClusterObject(org_api_key, env_id)
         for k,v in clusterObject.items():
             cluster_id = v['cluster_id']
             kafka_endpoint = v['kafka_endpoint']
@@ -116,12 +112,13 @@ def evaluateClusterObject(org_api_key, confData):
 
             elif v['cluster_type'].upper() == 'DEDICATED':
                 cluster_cku = v['cluster_cku']
-                maxPartition = cluster_cku * dedicated_cluster_parition_max_limit_per_cku
+                maxPartition = int(cluster_cku * dedicated_cluster_parition_max_limit_per_cku)
+
                 if maxPartition > 100000:
                     maxPartition = 100000
-                warn_dedicated_partition_limit = (maxPartition*80/100)
-
-                warn_max_dedicated_partition_limit = (dedicated_cluster_parition_max_limit*80/100)
+                
+                warn_dedicated_partition_limit = int(maxPartition*80/100)
+                warn_max_dedicated_partition_limit = int(dedicated_cluster_parition_max_limit*80/100)
 
                 if numberOfPartitions >= dedicated_cluster_parition_max_limit:
                     print("CRITICAL - Number of partitions are exceeding maximum limit of {}\nPartition Count - {}".format(dedicated_cluster_parition_max_limit, numberOfPartitions))
@@ -151,7 +148,7 @@ def main():
 
     conf = open(config_file)
     confData = json.load(conf)
-    org_api_key = confData['org_api_key']    
+    org_api_key = confData['org_api_key']
     
     evaluateClusterObject(org_api_key, confData)
     return
